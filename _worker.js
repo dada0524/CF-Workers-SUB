@@ -1,11 +1,11 @@
-
 // 部署完成后在网址后面加上这个，获取自建节点和机场聚合节点，/?token=auto或/auto或
 
 let mytoken = 'auto';
 let guestToken = ''; //可以随便取，或者uuid生成，https://1024tools.com/uuid
 let BotToken = ''; //可以为空，或者@BotFather中输入/start，/newbot，并关注机器人
 let ChatID = ''; //可以为空，或者@userinfobot中获取，/start
-let TG = 1; //小白勿动， 开发者专用，1 为推送所有的访问信息，0 为不推送订阅转换后端的访问信息与异常访问
+let TG = 0; // 小白勿动，开发者专用，1 为推送所有访问信息，0 为不推送订阅转换后端的访问信息与异常访问
+let TG_SUB_UPDATE_NOTIFY = 1; // 新增：订阅更新通知开关，1 为启用，0 为关闭
 let FileName = 'CF-Workers-SUB';
 let SUBUpdateTime = 6; //自定义订阅更新时间，单位小时
 let total = 99;//TB
@@ -31,6 +31,7 @@ export default {
 		BotToken = env.TGTOKEN || BotToken;
 		ChatID = env.TGID || ChatID;
 		TG = env.TG || TG;
+		TG_SUB_UPDATE_NOTIFY = env.TG_SUB_UPDATE_NOTIFY || TG_SUB_UPDATE_NOTIFY; // 新增环境变量支持
 		subConverter = env.SUBAPI || subConverter;
 		if (subConverter.includes("http://")) {
 			subConverter = subConverter.split("//")[1];
@@ -179,6 +180,64 @@ export default {
 
 				base64Data = encodeBase64(result)
 			}
+
+			// 构建响应头对象
+			const responseHeaders = {
+				"content-type": "text/plain; charset=utf-8",
+				"Profile-Update-Interval": `${SUBUpdateTime}`,
+				"Profile-web-page-url": request.url.includes('?') ? request.url.split('?')[0] : request.url,
+				//"Subscription-Userinfo": `upload=${UD}; download=${UD}; total=${total}; expire=${expire}`,
+			};
+
+			// ===== 新增：订阅更新通知 =====
+			if (TG_SUB_UPDATE_NOTIFY === 1) { // 如果启用订阅更新通知
+				const userIP = request.headers.get('CF-Connecting-IP'); // 获取真实IP
+				if (userIP) {
+					const updateMsg = `🔔 订阅更新通知\n\n` +
+						`🕐 时间: ${new Date().toLocaleString()}\n` +
+						`👤 用户IP: ${userIP}\n` +
+						`🌐 域名: ${url.hostname}\n` +
+						`🔗 路径: ${url.pathname}${url.search}\n` +
+						`🆔 Token: ${token || 'guest/未识别'}\n` +
+						`📦 动作: 用户请求并获取了最新订阅内容\n`;
+					try {
+						await sendMessage(`🔔 订阅更新提醒`, userIP, updateMsg);
+						console.log(`✅ TG 订阅更新通知已发送: IP=${userIP}`);
+					} catch (e) {
+						console.error(`❌ 发送订阅更新 TG 通知失败:`, e);
+					}
+				}
+			}
+			// ===== 通知结束 =====
+
+			if (订阅格式 == 'base64' || token == fakeToken) {
+				return new Response(base64Data, { headers: responseHeaders });
+			} else if (订阅格式 == 'clash') {
+				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=clash&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+			} else if (订阅格式 == 'singbox') {
+				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=singbox&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+			} else if (订阅格式 == 'surge') {
+				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=surge&ver=4&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+			} else if (订阅格式 == 'quanx') {
+				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=quanx&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&udp=true`;
+			} else if (订阅格式 == 'loon') {
+				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=loon&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
+			}
+			//console.log(订阅转换URL);
+			try {
+				const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': userAgentHeader } });//订阅转换
+				if (!subConverterResponse.ok) return new Response(base64Data, { headers: responseHeaders });
+				let subConverterContent = await subConverterResponse.text();
+				if (订阅格式 == 'clash') subConverterContent = await clashFix(subConverterContent);
+				// 只有非浏览器订阅才会返回SUBNAME
+				if (!userAgent.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(FileName)}`;
+				return new Response(subConverterContent, { headers: responseHeaders });
+			} catch (error) {
+				return new Response(base64Data, { headers: responseHeaders });
+			}
+		}
+	}
+};
 
 			// 构建响应头对象
 			const responseHeaders = {
@@ -825,5 +884,4 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 			headers: { "Content-Type": "text/plain;charset=utf-8" }
 		});
 	}
-
 }
