@@ -465,12 +465,6 @@ async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
 		}
 	});
 
-	// 输出请求的详细信息
-	console.log(`请求URL: ${targetUrl}`);
-	console.log(`请求头: ${JSON.stringify([...newHeaders])}`);
-	console.log(`请求方法: ${request.method}`);
-	console.log(`请求体: ${request.method === "GET" ? null : request.body}`);
-
 	// 发送请求并返回响应
 	return fetch(modifiedRequest);
 }
@@ -827,3 +821,4 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 	}
 
 }
+
