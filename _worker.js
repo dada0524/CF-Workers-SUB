@@ -370,22 +370,6 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 	if (!api || api.length === 0) {
 		return [];
 	} else api = [...new Set(api)]; // 去重
-// 新增：过滤掉指向当前worker的订阅链接，避免递归调用
-    const currentHost = new URL(request.url).hostname;
-    api = api.filter(link => {
-        try {
-            const url = new URL(link);
-            return url.hostname !== currentHost;
-        } catch (e) {
-            return true; // 如果URL解析失败，保留该链接
-        }
-    });
-    
-    // 如果过滤后没有有效链接，直接返回空
-    if (api.length === 0) {
-        return [[], ""];
-    }
-	
 	let newapi = "";
 	let 订阅转换URLs = "";
 	let 异常订阅 = "";
@@ -837,5 +821,6 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 	}
 
 }
+
 
 
