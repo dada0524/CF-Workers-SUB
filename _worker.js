@@ -19,7 +19,7 @@ https://cfxr.eu.org/getSub
 let urls = [];
 let subConverter = "SUBAPI.cmliussss.net"; //在线订阅转换后端，目前使用CM的订阅转换功能。支持自建psub 可自行搭建https://github.com/bulianglin/psub
 let subConfig = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini"; //订阅配置文件
-let subProtocol = 'https';f
+let subProtocol = 'https';
 
 export default {
 	async fetch(request, env) {
@@ -465,6 +465,12 @@ async function getUrl(request, targetUrl, 追加UA, userAgentHeader) {
 		}
 	});
 
+	// 输出请求的详细信息
+	console.log(`请求URL: ${targetUrl}`);
+	console.log(`请求头: ${JSON.stringify([...newHeaders])}`);
+	console.log(`请求方法: ${request.method}`);
+	console.log(`请求体: ${request.method === "GET" ? null : request.body}`);
+
 	// 发送请求并返回响应
 	return fetch(modifiedRequest);
 }
@@ -821,6 +827,3 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 	}
 
 }
-
-
-
