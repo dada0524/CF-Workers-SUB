@@ -4,7 +4,7 @@ let mytoken = 'auto';
 let guestToken = ''; //可以随便取，或者uuid生成，https://1024tools.com/uuid
 let BotToken = ''; //可以为空，或者@BotFather中输入/start，/newbot，并关注机器人
 let ChatID = ''; //可以为空，或者@userinfobot中获取，/start
-let TG = 1; //小白勿动， 开发者专用，1 为推送所有的访问信息，0 为不推送订阅转换后端的访问信息与异常访问
+let TG = 0; //小白勿动， 开发者专用，1 为推送所有的访问信息，0 为不推送订阅转换后端的访问信息与异常访问
 let FileName = 'CF-Workers-SUB';
 let SUBUpdateTime = 6; //自定义订阅更新时间，单位小时
 let total = 99;//TB
@@ -20,12 +20,39 @@ let subConverter = "SUBAPI.cmliussss.net"; //在线订阅转换后端，目前�
 let subConfig = "https://raw.githubusercontent.com/cmliu/ACL4SSR/main/Clash/config/ACL4SSR_Online_MultiCountry.ini"; //订阅配置文件
 let subProtocol = 'https';
 
+// 添加请求跟踪，防止重复通知
+let requestTracker = new Map();
+
 export default {
 	async fetch(request, env) {
 		const userAgentHeader = request.headers.get('User-Agent');
 		const userAgent = userAgentHeader ? userAgentHeader.toLowerCase() : "null";
 		const url = new URL(request.url);
 		const token = url.searchParams.get('token');
+		
+		// 创建请求唯一标识符
+		const requestId = `${url.pathname}${url.search}`;
+		const currentTime = Date.now();
+		
+		// 检查是否在短时间内有相同请求
+		if (requestTracker.has(requestId)) {
+			const lastRequestTime = requestTracker.get(requestId);
+			// 如果5秒内有相同请求，忽略后续请求
+			if (currentTime - lastRequestTime < 5000) {
+				console.log(`忽略重复请求: ${requestId}`);
+				return new Response("请求过于频繁", { status: 429 });
+			}
+		}
+		
+		// 记录当前请求
+		requestTracker.set(requestId, currentTime);
+		// 清理过期的请求记录（1分钟前的）
+		for (let [key, time] of requestTracker.entries()) {
+			if (currentTime - time > 60000) {
+				requestTracker.delete(key);
+			}
+		}
+		
 		mytoken = env.TOKEN || mytoken;
 		BotToken = env.TGTOKEN || BotToken;
 		ChatID = env.TGID || ChatID;
@@ -47,213 +74,230 @@ export default {
 		guestToken = env.GUESTTOKEN || env.GUEST || guestToken;
 		if (!guestToken) guestToken = await MD5MD5(mytoken);
 		const 访客订阅 = guestToken;
-		//console.log(`${fakeUserID}\n${fakeHostName}`); // 打印fakeID
-
-		let UD = Math.floor(((timestamp - Date.now()) / timestamp * total * 1099511627776) / 2);
-		total = total * 1099511627776;
-		let expire = Math.floor(timestamp / 1000);
-		SUBUpdateTime = env.SUBUPTIME || SUBUpdateTime;
 
 		// 获取订阅人信息
-		const subscriberIP = request.headers.get('CF-Connecting-IP') || request.headers.get('X-Forwarded-For') || request.headers.get('X-Real-IP') || '未知IP';
+		const subscriberIP = request.headers.get('CF-Connecting-IP') || '未知IP';
 		const subscriberUA = userAgentHeader || '未知UA';
 		const subscriberCountry = request.headers.get('CF-IPCountry') || '未知国家';
 		const subscriberCity = request.headers.get('CF-IPCity') || '未知城市';
-		const subscriberRegion = request.headers.get('CF-Region') || '未知区域';
-		const subscriberASN = request.headers.get('CF-ASN') || '未知ASN';
-		const subscriberISP = request.headers.get('CF-ISP') || '未知ISP';
-		const subscriberColo = request.headers.get('CF-RAY') ? request.headers.get('CF-RAY').split('-')[1] : '未知数据中心';
+		const subscriberISP = request.cf ? (request.cf.asOrganization || '未知ISP') : '未知ISP';
+		const subscriberColo = request.cf ? request.cf.colo : '未知数据中心';
 
 		// 构建订阅人信息
 		const subscriberInfo = `
 IP: ${subscriberIP}
 国家: ${subscriberCountry}
 城市: ${subscriberCity}
-区域: ${subscriberRegion}
-ASN: ${subscriberASN}
 ISP: ${subscriberISP}
 数据中心: ${subscriberColo}
 UA: ${subscriberUA}
 域名: ${url.hostname}
-入口: ${url.pathname + url.search}
+入口: ${url.pathname}${url.search}
+时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}
 		`.trim();
 
-		if (!([mytoken, fakeToken, 访客订阅].includes(token) || url.pathname == ("/" + mytoken) || url.pathname.includes("/" + mytoken + "?"))) {
+		// 检查是否是有效订阅请求
+		const isValidSubscriptionRequest = 
+			[mytoken, fakeToken, 访客订阅].includes(token) || 
+			url.pathname === `/${mytoken}` || 
+			url.pathname.includes(`/${mytoken}?`);
+
+		if (!isValidSubscriptionRequest) {
 			if (TG == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") {
 				await sendMessage(`#异常访问 ${FileName}`, subscriberInfo);
 			}
-			if (env.URL302) return Response.redirect(env.URL302, 302);
-			else if (env.URL) return await proxyURL(env.URL, url);
-			else return new Response(await nginx(), {
-				status: 200,
-				headers: {
-					'Content-Type': 'text/html; charset=UTF-8',
-				},
-			});
-		} else {
-			// 添加通知发送标志，确保只发送一次通知
-			let notificationSent = false;
-			
-			if (env.KV) {
-				await 迁移地址列表(env, 'LINK.txt');
-				if (userAgent.includes('mozilla') && !url.search) {
-					// 编辑订阅页面访问通知
-					if (TG == 1 && !notificationSent) {
-						await sendMessage(`#编辑订阅 ${FileName}`, subscriberInfo);
-						notificationSent = true;
-					}
-					return await KV(request, env, 'LINK.txt', 访客订阅);
-				} else {
-					MainData = await env.KV.get('LINK.txt') || MainData;
-				}
+			if (env.URL302) {
+				return Response.redirect(env.URL302, 302);
+			} else if (env.URL) {
+				return await proxyURL(env.URL, url);
 			} else {
-				MainData = env.LINK || MainData;
-				if (env.LINKSUB) urls = await ADD(env.LINKSUB);
-			}
-			let 重新汇总所有链接 = await ADD(MainData + '\n' + urls.join('\n'));
-			let 自建节点 = "";
-			let 订阅链接 = "";
-			for (let x of 重新汇总所有链接) {
-				if (x.toLowerCase().startsWith('http')) {
-					订阅链接 += x + '\n';
-				} else {
-					自建节点 += x + '\n';
-				}
-			}
-			MainData = 自建节点;
-			urls = await ADD(订阅链接);
-			
-			// 获取订阅通知 - 确保只发送一次
-			if (TG == 1 && !notificationSent && !(userAgent.includes('mozilla') && !url.search)) {
-				await sendMessage(`#获取订阅 ${FileName}`, subscriberInfo);
-				notificationSent = true;
-			}
-			
-			const isSubConverterRequest = request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || userAgent.includes('subconverter');
-			let 订阅格式 = 'base64';
-			if (!(userAgent.includes('null') || isSubConverterRequest || userAgent.includes('nekobox') || userAgent.includes(('CF-Workers-SUB').toLowerCase()))) {
-				if (userAgent.includes('sing-box') || userAgent.includes('singbox') || url.searchParams.has('sb') || url.searchParams.has('singbox')) {
-					订阅格式 = 'singbox';
-				} else if (userAgent.includes('surge') || url.searchParams.has('surge')) {
-					订阅格式 = 'surge';
-				} else if (userAgent.includes('quantumult') || url.searchParams.has('quanx')) {
-					订阅格式 = 'quanx';
-				} else if (userAgent.includes('loon') || url.searchParams.has('loon')) {
-					订阅格式 = 'loon';
-				} else if (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || url.searchParams.has('clash')) {
-					订阅格式 = 'clash';
-				}
-			}
-
-			let subConverterUrl;
-			let 订阅转换URL = `${url.origin}/${await MD5MD5(fakeToken)}?token=${fakeToken}`;
-			//console.log(订阅转换URL);
-			let req_data = MainData;
-
-			let 追加UA = 'v2rayn';
-			if (url.searchParams.has('b64') || url.searchParams.has('base64')) 订阅格式 = 'base64';
-			else if (url.searchParams.has('clash')) 追加UA = 'clash';
-			else if (url.searchParams.has('singbox')) 追加UA = 'singbox';
-			else if (url.searchParams.has('surge')) 追加UA = 'surge';
-			else if (url.searchParams.has('quanx')) 追加UA = 'Quantumult%20X';
-			else if (url.searchParams.has('loon')) 追加UA = 'Loon';
-
-			const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.()); // 去重
-			if (订阅链接数组.length > 0) {
-				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
-				console.log(请求订阅响应内容);
-				req_data += 请求订阅响应内容[0].join('\n');
-				订阅转换URL += "|" + 请求订阅响应内容[1];
-				if (订阅格式 == 'base64' && !isSubConverterRequest && 请求订阅响应内容[1].includes('://')) {
-					subConverterUrl = `${subProtocol}://${subConverter}/sub?target=mixed&url=${encodeURIComponent(请求订阅响应内容[1])}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
-					try {
-						const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': 'v2rayN/CF-Workers-SUB  (https://github.com/cmliu/CF-Workers-SUB)' } });
-						if (subConverterResponse.ok) {
-							const subConverterContent = await subConverterResponse.text();
-							req_data += '\n' + atob(subConverterContent);
-						}
-					} catch (error) {
-						console.log('订阅转换请回base64失败，检查订阅转换后端是否正常运行');
-					}
-				}
-			}
-
-			if (env.WARP) 订阅转换URL += "|" + (await ADD(env.WARP)).join("|");
-			//修复中文错误
-			const utf8Encoder = new TextEncoder();
-			const encodedData = utf8Encoder.encode(req_data);
-			//const text = String.fromCharCode.apply(null, encodedData);
-			const utf8Decoder = new TextDecoder();
-			const text = utf8Decoder.decode(encodedData);
-
-			//去重
-			const uniqueLines = new Set(text.split('\n'));
-			const result = [...uniqueLines].join('\n');
-			//console.log(result);
-
-			let base64Data;
-			try {
-				base64Data = btoa(result);
-			} catch (e) {
-				function encodeBase64(data) {
-					const binary = new TextEncoder().encode(data);
-					let base64 = '';
-					const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-
-					for (let i = 0; i < binary.length; i += 3) {
-						const byte1 = binary[i];
-						const byte2 = binary[i + 1] || 0;
-						const byte3 = binary[i + 2] || 0;
-
-						base64 += chars[byte1 >> 2];
-						base64 += chars[((byte1 & 3) << 4) | (byte2 >> 4)];
-						base64 += chars[((byte2 & 15) << 2) | (byte3 >> 6)];
-						base64 += chars[byte3 & 63];
-					}
-
-					const padding = 3 - (binary.length % 3 || 3);
-					return base64.slice(0, base64.length - padding) + '=='.slice(0, padding);
-				}
-
-				base64Data = encodeBase64(result)
-			}
-
-			// 构建响应头对象
-			const responseHeaders = {
-				"content-type": "text/plain; charset=utf-8",
-				"Profile-Update-Interval": `${SUBUpdateTime}`,
-				"Profile-web-page-url": request.url.includes('?') ? request.url.split('?')[0] : request.url,
-				//"Subscription-Userinfo": `upload=${UD}; download=${UD}; total=${total}; expire=${expire}`,
-			};
-
-			if (订阅格式 == 'base64' || token == fakeToken) {
-				return new Response(base64Data, { headers: responseHeaders });
-			} else if (订阅格式 == 'clash') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=clash&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
-			} else if (订阅格式 == 'singbox') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=singbox&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
-			} else if (订阅格式 == 'surge') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=surge&ver=4&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
-			} else if (订阅格式 == 'quanx') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=quanx&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&udp=true`;
-			} else if (订阅格式 == 'loon') {
-				subConverterUrl = `${subProtocol}://${subConverter}/sub?target=loon&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false`;
-			}
-			//console.log(订阅转换URL);
-			try {
-				const subConverterResponse = await fetch(subConverterUrl, { headers: { 'User-Agent': userAgentHeader } });//订阅转换
-				if (!subConverterResponse.ok) return new Response(base64Data, { headers: responseHeaders });
-				let subConverterContent = await subConverterResponse.text();
-				if (订阅格式 == 'clash') subConverterContent = await clashFix(subConverterContent);
-				// 只有非浏览器订阅才会返回SUBNAME
-				if (!userAgent.includes('mozilla')) responseHeaders["Content-Disposition"] = `attachment; filename*=utf-8''${encodeURIComponent(FileName)}`;
-				return new Response(subConverterContent, { headers: responseHeaders });
-			} catch (error) {
-				return new Response(base64Data, { headers: responseHeaders });
+				return new Response(await nginx(), {
+					status: 200,
+					headers: {
+						'Content-Type': 'text/html; charset=UTF-8',
+					},
+				});
 			}
 		}
+
+		// 主逻辑 - 确保只发送一次通知
+		let shouldSendNotification = false;
+		let notificationType = '';
+
+		// 确定是否发送通知
+		if (TG == 1) {
+			if (userAgent.includes('mozilla') && !url.search) {
+				// 编辑页面访问
+				shouldSendNotification = true;
+				notificationType = '#编辑订阅';
+			} else if (!userAgent.includes('subconverter') && !userAgent.includes('cf-workers-sub')) {
+				// 订阅获取访问（排除订阅转换器的请求）
+				shouldSendNotification = true;
+				notificationType = '#获取订阅';
+			}
+		}
+
+		// 发送通知（如果有必要）
+		if (shouldSendNotification) {
+			await sendMessage(`${notificationType} ${FileName}`, subscriberInfo);
+		}
+
+		// 处理KV存储
+		if (env.KV) {
+			await 迁移地址列表(env, 'LINK.txt');
+			if (userAgent.includes('mozilla') && !url.search) {
+				return await KV(request, env, 'LINK.txt', 访客订阅);
+			} else {
+				MainData = await env.KV.get('LINK.txt') || MainData;
+			}
+		} else {
+			MainData = env.LINK || MainData;
+			if (env.LINKSUB) urls = await ADD(env.LINKSUB);
+		}
+
+		// 处理订阅数据
+		let 重新汇总所有链接 = await ADD(MainData + '\n' + urls.join('\n'));
+		let 自建节点 = "";
+		let 订阅链接 = "";
+		
+		for (let x of 重新汇总所有链接) {
+			if (x.toLowerCase().startsWith('http')) {
+				订阅链接 += x + '\n';
+			} else {
+				自建节点 += x + '\n';
+			}
+		}
+		
+		MainData = 自建节点;
+		urls = await ADD(订阅链接);
+
+		// 确定订阅格式
+		const isSubConverterRequest = request.headers.get('subconverter-request') || 
+								   request.headers.get('subconverter-version') || 
+								   userAgent.includes('subconverter');
+		
+		let 订阅格式 = 'base64';
+		if (!(userAgent.includes('null') || isSubConverterRequest || userAgent.includes('nekobox') || userAgent.includes('cf-workers-sub'))) {
+			if (userAgent.includes('sing-box') || userAgent.includes('singbox') || url.searchParams.has('sb') || url.searchParams.has('singbox')) {
+				订阅格式 = 'singbox';
+			} else if (userAgent.includes('surge') || url.searchParams.has('surge')) {
+				订阅格式 = 'surge';
+			} else if (userAgent.includes('quantumult') || url.searchParams.has('quanx')) {
+				订阅格式 = 'quanx';
+			} else if (userAgent.includes('loon') || url.searchParams.has('loon')) {
+				订阅格式 = 'loon';
+			} else if (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || url.searchParams.has('clash')) {
+				订阅格式 = 'clash';
+			}
+		}
+
+		// 处理订阅转换
+		let subConverterUrl;
+		let 订阅转换URL = `${url.origin}/${await MD5MD5(fakeToken)}?token=${fakeToken}`;
+		let req_data = MainData;
+
+		// 处理外部订阅链接
+		const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.());
+		if (订阅链接数组.length > 0) {
+			try {
+				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 'v2rayn', userAgentHeader);
+				req_data += 请求订阅响应内容[0].join('\n');
+				订阅转换URL += "|" + 请求订阅响应内容[1];
+			} catch (error) {
+				console.error('获取订阅内容失败:', error);
+			}
+		}
+
+		// 处理WARP
+		if (env.WARP) {
+			订阅转换URL += "|" + (await ADD(env.WARP)).join("|");
+		}
+
+		// 编码数据
+		const utf8Encoder = new TextEncoder();
+		const encodedData = utf8Encoder.encode(req_data);
+		const utf8Decoder = new TextDecoder();
+		const text = utf8Decoder.decode(encodedData);
+
+		// 去重
+		const uniqueLines = new Set(text.split('\n'));
+		const result = [...uniqueLines].join('\n');
+
+		// Base64编码
+		let base64Data;
+		try {
+			base64Data = btoa(unescape(encodeURIComponent(result)));
+		} catch (e) {
+			base64Data = Buffer.from(result).toString('base64');
+		}
+
+		// 构建响应头
+		const responseHeaders = {
+			"content-type": "text/plain; charset=utf-8",
+			"Profile-Update-Interval": `${SUBUpdateTime}`,
+			"Profile-web-page-url": request.url.split('?')[0],
+		};
+
+		// 如果是base64格式或特定token，直接返回
+		if (订阅格式 === 'base64' || token === fakeToken) {
+			return new Response(base64Data, { headers: responseHeaders });
+		}
+
+		// 构建订阅转换URL
+		let target = 'clash';
+		if (订阅格式 === 'singbox') target = 'singbox';
+		else if (订阅格式 === 'surge') target = 'surge';
+		else if (订阅格式 === 'quanx') target = 'quanx';
+		else if (订阅格式 === 'loon') target = 'loon';
+
+		subConverterUrl = `${subProtocol}://${subConverter}/sub?target=${target}&url=${encodeURIComponent(订阅转换URL)}&insert=false&config=${encodeURIComponent(subConfig)}&emoji=true&list=false&tfo=false&scv=true&fdn=false&sort=false&new_name=true`;
+
+		try {
+			const subConverterResponse = await fetch(subConverterUrl, { 
+				headers: { 'User-Agent': userAgentHeader }
+			});
+			
+			if (subConverterResponse.ok) {
+				let subConverterContent = await subConverterResponse.text();
+				if (订阅格式 === 'clash') {
+					subConverterContent = await clashFix(subConverterContent);
+				}
+				return new Response(subConverterContent, { headers: responseHeaders });
+			}
+		} catch (error) {
+			console.error('订阅转换失败:', error);
+		}
+
+		// 如果订阅转换失败，返回base64数据
+		return new Response(base64Data, { headers: responseHeaders });
 	}
 };
+
+// 简化的sendMessage函数
+async function sendMessage(type, subscriberInfo) {
+	if (!BotToken || !ChatID) {
+		console.log('TG通知未配置: BotToken或ChatID为空');
+		return;
+	}
+
+	try {
+		let msg = `${type}\n${subscriberInfo}`;
+		let url = `https://api.telegram.org/bot${BotToken}/sendMessage?chat_id=${ChatID}&parse_mode=HTML&text=${encodeURIComponent(msg)}`;
+		
+		const response = await fetch(url, {
+			method: 'GET',
+			headers: {
+				'User-Agent': 'Mozilla/5.0 (compatible; CF-Workers-SUB/1.0)'
+			}
+		});
+		
+		if (!response.ok) {
+			console.error('TG通知发送失败:', response.status);
+		}
+	} catch (error) {
+		console.error('TG通知发送异常:', error);
+	}
+}
 
 async function ADD(envadd) {
 	var addtext = envadd.replace(/[	"'|\r\n]+/g, '\n').replace(/\n+/g, '\n');	// 替换为换行
@@ -857,5 +901,6 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 		});
 	}
 }
+
 
 
