@@ -71,6 +71,7 @@ export default {
 			if (env.KV) {
 				await 迁移地址列表(env, 'LINK.txt');
 				if (userAgent.includes('mozilla') && !url.search) {
+					// 编辑订阅页面，发送一次通知
 					await sendMessage(`#编辑订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>\n${subscriberInfo}`);
 					return await KV(request, env, 'LINK.txt', 访客订阅);
 				} else {
@@ -109,8 +110,10 @@ export default {
 				}
 			}
 			
-			// 发送获取订阅通知，包含订阅格式信息
-			await sendMessage(`#获取订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}\n订阅格式: ${订阅格式}</tg-spoiler>\n${subscriberInfo}`);
+			// 只在获取订阅时发送一次通知，编辑订阅已经在上面的if块中处理了
+			if (!userAgent.includes('mozilla') || url.search) {
+				await sendMessage(`#获取订阅 ${FileName}`, request.headers.get('CF-Connecting-IP'), `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}\n订阅格式: ${订阅格式}</tg-spoiler>\n${subscriberInfo}`);
+			}
 
 			let subConverterUrl;
 			let 订阅转换URL = `${url.origin}/${await MD5MD5(fakeToken)}?token=${fakeToken}`;
