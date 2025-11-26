@@ -1,4 +1,3 @@
-
 // 部署完成后在网址后面加上这个，获取自建节点和机场聚合节点，/?token=auto或/auto或
 
 let mytoken = 'auto';
@@ -825,5 +824,4 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 			headers: { "Content-Type": "text/plain;charset=utf-8" }
 		});
 	}
-
 }
