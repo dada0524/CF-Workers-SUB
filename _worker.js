@@ -91,12 +91,16 @@ UA: ${subscriberUA}
 				},
 			});
 		} else {
+			// 添加通知发送标志，确保只发送一次通知
+			let notificationSent = false;
+			
 			if (env.KV) {
 				await 迁移地址列表(env, 'LINK.txt');
 				if (userAgent.includes('mozilla') && !url.search) {
-					// 只在编辑订阅页面发送一次通知
-					if (TG == 1) {
+					// 编辑订阅页面访问通知
+					if (TG == 1 && !notificationSent) {
 						await sendMessage(`#编辑订阅 ${FileName}`, subscriberInfo);
+						notificationSent = true;
 					}
 					return await KV(request, env, 'LINK.txt', 访客订阅);
 				} else {
@@ -119,9 +123,10 @@ UA: ${subscriberUA}
 			MainData = 自建节点;
 			urls = await ADD(订阅链接);
 			
-			// 只在获取订阅时发送一次通知（不再重复发送）
-			if (TG == 1 && !userAgent.includes('mozilla')) {
+			// 获取订阅通知 - 确保只发送一次
+			if (TG == 1 && !notificationSent && !(userAgent.includes('mozilla') && !url.search)) {
 				await sendMessage(`#获取订阅 ${FileName}`, subscriberInfo);
+				notificationSent = true;
 			}
 			
 			const isSubConverterRequest = request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || userAgent.includes('subconverter');
@@ -852,4 +857,5 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 		});
 	}
 }
+
 
