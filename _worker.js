@@ -26,6 +26,11 @@ export default {
 		const userAgent = userAgentHeader ? userAgentHeader.toLowerCase() : "null";
 		const url = new URL(request.url);
 		const token = url.searchParams.get('token');
+		const clientIP = request.headers.get('CF-Connecting-IP') || 
+					   request.headers.get('X-Forwarded-For') || 
+					   request.headers.get('X-Real-IP') || 
+					   '未知IP';
+		
 		mytoken = env.TOKEN || mytoken;
 		BotToken = env.TGTOKEN || BotToken;
 		ChatID = env.TGID || ChatID;
@@ -54,11 +59,8 @@ export default {
 		let expire = Math.floor(timestamp / 1000);
 		SUBUpdateTime = env.SUBUPTIME || SUBUpdateTime;
 
-		// 获取真实IP地址
-		const realIP = await getRealIP(request);
-		
 		if (!([mytoken, fakeToken, 访客订阅].includes(token) || url.pathname == ("/" + mytoken) || url.pathname.includes("/" + mytoken + "?"))) {
-			if (TG == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") await sendMessage(`#异常访问 ${FileName}`, realIP, `UA: ${userAgent}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>\n🌐 真实IP: ${realIP.ip}\n📍 位置: ${realIP.country} - ${realIP.city}\n🏢 运营商: ${realIP.isp}`);
+			if (TG == 1 && url.pathname !== "/" && url.pathname !== "/favicon.ico") await sendMessage(`#异常访问 ${FileName}`, clientIP, `UA: ${userAgent}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
 			if (env.URL302) return Response.redirect(env.URL302, 302);
 			else if (env.URL) return await proxyURL(env.URL, url);
 			else return new Response(await nginx(), {
@@ -71,7 +73,7 @@ export default {
 			if (env.KV) {
 				await 迁移地址列表(env, 'LINK.txt');
 				if (userAgent.includes('mozilla') && !url.search) {
-					await sendMessage(`#编辑订阅 ${FileName}`, realIP, `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>\n🌐 真实IP: ${realIP.ip}\n📍 位置: ${realIP.country} - ${realIP.city}\n🏢 运营商: ${realIP.isp}`);
+					await sendMessage(`#编辑订阅 ${FileName}`, clientIP, `UA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`);
 					return await KV(request, env, 'LINK.txt', 访客订阅);
 				} else {
 					MainData = await env.KV.get('LINK.txt') || MainData;
@@ -93,20 +95,12 @@ export default {
 			MainData = 自建节点;
 			urls = await ADD(订阅链接);
 			
-			// 增强的订阅更新通知
-			const 订阅类型 = getSubscriptionType(userAgent, url);
-			await sendMessage(`#订阅更新 ${FileName}`, realIP, 
-				`📱 客户端: ${订阅类型}\n` +
-				`🌐 真实IP: ${realIP.ip}\n` +
-				`📍 位置: ${realIP.country} - ${realIP.city}\n` +
-				`🏢 运营商: ${realIP.isp}\n` +
-				`🔗 域名: ${url.hostname}\n` +
-				`📊 订阅格式: ${await getSubFormat(userAgent, url)}\n` +
-				`⏰ 时间: ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}\n` +
-				`<tg-spoiler>UA: ${userAgentHeader}</tg-spoiler>\n` +
-				`<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>`
-			);
-			
+			// 发送订阅更新通知，包含真实IP信息
+			const ipInfo = await getIPInfo(clientIP);
+			const 订阅详情 = `订阅格式: ${await getSubscribeFormat(userAgent, url)}\n订阅链接数: ${urls.length}\n自建节点数: ${自建节点.split('\n').filter(line => line.trim()).length}`;
+			await sendMessage(`#订阅更新 ${FileName}`, clientIP, 
+				`${ipInfo}\nUA: ${userAgentHeader}</tg-spoiler>\n域名: ${url.hostname}\n<tg-spoiler>入口: ${url.pathname + url.search}</tg-spoiler>\n${订阅详情}`);
+
 			const isSubConverterRequest = request.headers.get('subconverter-request') || request.headers.get('subconverter-version') || userAgent.includes('subconverter');
 			let 订阅格式 = 'base64';
 			if (!(userAgent.includes('null') || isSubConverterRequest || userAgent.includes('nekobox') || userAgent.includes(('CF-Workers-SUB').toLowerCase()))) {
@@ -138,7 +132,7 @@ export default {
 
 			const 订阅链接数组 = [...new Set(urls)].filter(item => item?.trim?.()); // 去重
 			if (订阅链接数组.length > 0) {
-				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader);
+				const 请求订阅响应内容 = await getSUB(订阅链接数组, request, 追加UA, userAgentHeader, clientIP);
 				console.log(请求订阅响应内容);
 				req_data += 请求订阅响应内容[0].join('\n');
 				订阅转换URL += "|" + 请求订阅响应内容[1];
@@ -233,104 +227,6 @@ export default {
 	}
 };
 
-// 新增函数：获取真实IP地址信息
-async function getRealIP(request) {
-	const ip = request.headers.get('CF-Connecting-IP') || 
-			   request.headers.get('X-Real-IP') || 
-			   request.headers.get('X-Forwarded-For') || 
-			   '未知IP';
-	
-	try {
-		const response = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
-		if (response.status === 200) {
-			const ipInfo = await response.json();
-			return {
-				ip: ip,
-				country: ipInfo.country || '未知国家',
-				city: ipInfo.city || '未知城市',
-				region: ipInfo.regionName || '未知地区',
-				isp: ipInfo.isp || ipInfo.org || '未知运营商',
-				as: ipInfo.as || '未知ASN',
-				status: ipInfo.status || 'fail'
-			};
-		}
-	} catch (error) {
-		console.log('IP查询失败:', error);
-	}
-	
-	// 默认返回
-	return {
-		ip: ip,
-		country: '未知国家',
-		city: '未知城市',
-		region: '未知地区',
-		isp: '未知运营商',
-		as: '未知ASN',
-		status: 'fail'
-	};
-}
-
-// 新增函数：获取订阅客户端类型
-function getSubscriptionType(userAgent, url) {
-	const ua = userAgent.toLowerCase();
-	
-	if (ua.includes('clash')) {
-		if (ua.includes('mihomo') || ua.includes('meta')) return 'Clash.Meta';
-		return 'Clash';
-	} else if (ua.includes('sing-box') || ua.includes('singbox')) {
-		return 'Sing-Box';
-	} else if (ua.includes('surge')) {
-		return 'Surge';
-	} else if (ua.includes('quantumult')) {
-		return 'Quantumult X';
-	} else if (ua.includes('loon')) {
-		return 'Loon';
-	} else if (ua.includes('v2ray')) {
-		return 'V2RayN';
-	} else if (ua.includes('shadowrocket')) {
-		return 'Shadowrocket';
-	} else if (ua.includes('nekobox')) {
-		return 'NekoBox';
-	} else if (ua.includes('subconverter')) {
-		return '订阅转换器';
-	} else if (url.searchParams.has('clash')) {
-		return 'Clash (手动指定)';
-	} else if (url.searchParams.has('sb') || url.searchParams.has('singbox')) {
-		return 'Sing-Box (手动指定)';
-	} else if (url.searchParams.has('surge')) {
-		return 'Surge (手动指定)';
-	} else if (url.searchParams.has('quanx')) {
-		return 'Quantumult X (手动指定)';
-	} else if (url.searchParams.has('loon')) {
-		return 'Loon (手动指定)';
-	} else if (url.searchParams.has('b64') || url.searchParams.has('base64')) {
-		return 'Base64原始订阅';
-	}
-	
-	return '未知客户端';
-}
-
-// 新增函数：获取订阅格式
-async function getSubFormat(userAgent, url) {
-	const ua = userAgent.toLowerCase();
-	
-	if (ua.includes('clash') || url.searchParams.has('clash')) {
-		return 'Clash';
-	} else if (ua.includes('sing-box') || ua.includes('singbox') || url.searchParams.has('sb') || url.searchParams.has('singbox')) {
-		return 'Sing-Box';
-	} else if (ua.includes('surge') || url.searchParams.has('surge')) {
-		return 'Surge';
-	} else if (ua.includes('quantumult') || url.searchParams.has('quanx')) {
-		return 'Quantumult X';
-	} else if (ua.includes('loon') || url.searchParams.has('loon')) {
-		return 'Loon';
-	} else if (url.searchParams.has('b64') || url.searchParams.has('base64')) {
-		return 'Base64';
-	}
-	
-	return '自适应';
-}
-
 async function ADD(envadd) {
 	var addtext = envadd.replace(/[	"'|\r\n]+/g, '\n').replace(/\n+/g, '\n');	// 替换为换行
 	//console.log(addtext);
@@ -372,34 +268,65 @@ async function nginx() {
 	return text;
 }
 
-async function sendMessage(type, ipInfo, add_data = "") {
+async function getIPInfo(ip) {
+	if (ip === '未知IP') return 'IP: 未知IP';
+	
+	try {
+		const response = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN&fields=status,message,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,query`);
+		if (response.status === 200) {
+			const ipInfo = await response.json();
+			if (ipInfo.status === 'success') {
+				return `IP: ${ip}\n国家: ${ipInfo.country} (${ipInfo.countryCode})\n地区: ${ipInfo.regionName} - ${ipInfo.city}\nISP: ${ipInfo.isp}\n组织: ${ipInfo.org}\nAS: ${ipInfo.as}`;
+			}
+		}
+	} catch (error) {
+		console.log('IP信息查询失败:', error);
+	}
+	
+	return `IP: ${ip}\n地理位置信息获取失败`;
+}
+
+async function getSubscribeFormat(userAgent, url) {
+	if (userAgent.includes('sing-box') || userAgent.includes('singbox') || url.searchParams.has('sb') || url.searchParams.has('singbox')) {
+		return 'singbox';
+	} else if (userAgent.includes('surge') || url.searchParams.has('surge')) {
+		return 'surge';
+	} else if (userAgent.includes('quantumult') || url.searchParams.has('quanx')) {
+		return 'quantumult';
+	} else if (userAgent.includes('loon') || url.searchParams.has('loon')) {
+		return 'loon';
+	} else if (userAgent.includes('clash') || userAgent.includes('meta') || userAgent.includes('mihomo') || url.searchParams.has('clash')) {
+		return 'clash';
+	} else if (url.searchParams.has('b64') || url.searchParams.has('base64')) {
+		return 'base64';
+	} else {
+		return 'base64';
+	}
+}
+
+async function sendMessage(type, ip, add_data = "") {
 	if (BotToken !== '' && ChatID !== '') {
 		let msg = "";
 		
-		// 增强的消息格式
-		if (typeof ipInfo === 'string') {
-			// 兼容旧版本调用
-			const response = await fetch(`http://ip-api.com/json/${ipInfo}?lang=zh-CN`);
-			if (response.status == 200) {
-				const ipInfoObj = await response.json();
-				msg = `${type}\nIP: ${ipInfo}\n国家: ${ipInfoObj.country}\n<tg-spoiler>城市: ${ipInfoObj.city}\n组织: ${ipInfoObj.org}\nASN: ${ipInfoObj.as}\n${add_data}`;
-			} else {
-				msg = `${type}\nIP: ${ipInfo}\n<tg-spoiler>${add_data}`;
+		// 如果IP不是未知，尝试获取详细信息
+		if (ip !== '未知IP') {
+			try {
+				const response = await fetch(`http://ip-api.com/json/${ip}?lang=zh-CN`);
+				if (response.status == 200) {
+					const ipInfo = await response.json();
+					if (ipInfo.status === 'success') {
+						msg = `${type}\nIP: ${ip}\n国家: ${ipInfo.country}\n<tg-spoiler>城市: ${ipInfo.city}\n组织: ${ipInfo.org}\nASN: ${ipInfo.as}\n${add_data}`;
+					} else {
+						msg = `${type}\nIP: ${ip}\n<tg-spoiler>${add_data}`;
+					}
+				} else {
+					msg = `${type}\nIP: ${ip}\n<tg-spoiler>${add_data}`;
+				}
+			} catch (error) {
+				msg = `${type}\nIP: ${ip}\n<tg-spoiler>${add_data}`;
 			}
 		} else {
-			// 新版本调用，使用完整的IP信息对象
-			if (ipInfo.status === 'success') {
-				msg = `${type}\n` +
-					  `🌐 IP: ${ipInfo.ip}\n` +
-					  `📍 位置: ${ipInfo.country} - ${ipInfo.city}\n` +
-					  `🏢 运营商: ${ipInfo.isp}\n` +
-					  `⚡ ASN: ${ipInfo.as}\n` +
-					  `<tg-spoiler>${add_data}</tg-spoiler>`;
-			} else {
-				msg = `${type}\n` +
-					  `🌐 IP: ${ipInfo.ip}\n` +
-					  `<tg-spoiler>${add_data}</tg-spoiler>`;
-			}
+			msg = `${type}\nIP: ${ip}\n<tg-spoiler>${add_data}`;
 		}
 
 		let url = "https://api.telegram.org/bot" + BotToken + "/sendMessage?chat_id=" + ChatID + "&parse_mode=HTML&text=" + encodeURIComponent(msg);
@@ -427,7 +354,7 @@ async function MD5MD5(text) {
 	const firstPassArray = Array.from(new Uint8Array(firstPass));
 	const firstHex = firstPassArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
-	const secondPass = await crypto.subtle.digest('MD5', encoder.encode(firstHex.slice(7, 27));
+	const secondPass = await crypto.subtle.digest('MD5', encoder.encode(firstHex.slice(7, 27)));
 	const secondPassArray = Array.from(new Uint8Array(secondPass));
 	const secondHex = secondPassArray.map(b => b.toString(16).padStart(2, '0')).join('');
 
@@ -499,7 +426,7 @@ async function proxyURL(proxyURL, url) {
 	return newResponse;
 }
 
-async function getSUB(api, request, 追加UA, userAgentHeader) {
+async function getSUB(api, request, 追加UA, userAgentHeader, clientIP) {
 	if (!api || api.length === 0) {
 		return [];
 	} else api = [...new Set(api)]; // 去重
@@ -566,6 +493,17 @@ async function getSUB(api, request, 追加UA, userAgentHeader) {
 				}
 			}
 		}
+		
+		// 发送订阅获取详情通知
+		if (BotToken && ChatID) {
+			const 成功数 = modifiedResponses.filter(r => r.status === 'fulfilled').length;
+			const 失败数 = modifiedResponses.filter(r => r.status !== 'fulfilled').length;
+			const 订阅详情 = `订阅源总数: ${api.length}\n成功获取: ${成功数}\n获取失败: ${失败数}\n客户端IP: ${clientIP}`;
+			
+			await sendMessage(`#订阅获取详情 ${FileName}`, clientIP, 
+				`${订阅详情}\n<tg-spoiler>订阅源: ${api.join(', ')}</tg-spoiler>`);
+		}
+		
 	} catch (error) {
 		console.error(error); // 捕获并输出错误信息
 	} finally {
@@ -631,6 +569,11 @@ async function 迁移地址列表(env, txt = 'ADD.txt') {
 
 async function KV(request, env, txt = 'ADD.txt', guest) {
 	const url = new URL(request.url);
+	const clientIP = request.headers.get('CF-Connecting-IP') || 
+				   request.headers.get('X-Forwarded-For') || 
+				   request.headers.get('X-Real-IP') || 
+				   '未知IP';
+	
 	try {
 		// POST请求处理
 		if (request.method === "POST") {
@@ -638,6 +581,13 @@ async function KV(request, env, txt = 'ADD.txt', guest) {
 			try {
 				const content = await request.text();
 				await env.KV.put(txt, content);
+				
+				// 发送KV更新通知
+				const ipInfo = await getIPInfo(clientIP);
+				const 更新详情 = `更新类型: KV存储\n文件: ${txt}\n内容行数: ${content.split('\n').length}`;
+				await sendMessage(`#配置更新 ${FileName}`, clientIP, 
+					`${ipInfo}\n${更新详情}\n<tg-spoiler>更新内容预览: ${content.substring(0, 200)}...</tg-spoiler>`);
+					
 				return new Response("保存成功");
 			} catch (error) {
 				console.error('保存KV时发生错误:', error);
